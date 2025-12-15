@@ -3,6 +3,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
@@ -10,6 +11,8 @@ import fs from "fs";
 import { sendEmail } from "./gmail";
 import { uploadToSupabase } from "./supabaseStorage";
 import { insertProjectSchema, insertProfileSchema, insertAdminUserSchema } from "@shared/schema";
+
+const PgSession = connectPgSimple(session);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -41,19 +44,29 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET || "codewithkayla-secret-key-change-in-production",
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      },
-    })
-  );
+  const isProduction = process.env.NODE_ENV === "production";
+  
+  const sessionConfig: session.SessionOptions = {
+    secret: process.env.SESSION_SECRET || "codewithkayla-secret-key-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  };
+
+  if (isProduction && process.env.DATABASE_URL) {
+    sessionConfig.store = new PgSession({
+      conString: process.env.DATABASE_URL,
+      tableName: "session",
+      createTableIfMissing: true,
+    });
+  }
+
+  app.use(session(sessionConfig));
 
   // Legacy /uploads fallback for existing local images (secured - only serves image files)
   const uploadsDir = path.join(process.cwd(), "uploads");
